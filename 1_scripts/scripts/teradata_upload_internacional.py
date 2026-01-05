@@ -54,7 +54,7 @@ class ColorFormatter(logging.Formatter):
         return formatter.format(record)
 
 
-def setup_logging(job_name: str):
+def setup_logging(job_name: str) -> logging.Logger:
     log_path = pathlib.Path("logs")
     log_path.mkdir(exist_ok=True)
     log_filename = (
@@ -267,7 +267,7 @@ def load_file(file: str) -> pandas.DataFrame:
     return df
 
 
-def move_file(base_tap: pathlib.Path, file: str):
+def move_file(base_tap: pathlib.Path, file: str) -> None:
     """_summary_
 
     Args:
@@ -276,14 +276,14 @@ def move_file(base_tap: pathlib.Path, file: str):
     os.rename(file, str(base_tap) + "\\processed\\" + file[file.rfind("\\") + 1 :])
 
 
-def create_processed_folder(base_tap: pathlib.Path):
+def create_processed_folder(base_tap: pathlib.Path) -> None:
     try:
         os.mkdir(str(base_tap) + "\\processed\\")
     except Exception:
         ...
 
 
-def main():
+def main() -> None:
     """
     _summary_
     """
@@ -429,7 +429,7 @@ def main():
                 )
                 if not result["errors_dataframe"].empty:
                     logger.info(
-                        "Resultado do envio: ", result["errors_dataframe"].head(2)
+                        "Resultado do envio: %s", result["errors_dataframe"].head(2)
                     )
                     errors_dataframe = result["errors_dataframe"].head(2)
                     errors_dataframe.to_csv(

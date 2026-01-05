@@ -197,11 +197,11 @@ def ensure_staging_table(table_name: str, logger: logging.Logger) -> None:
         raise e
 
 
-def list_dates_in_file(file: str) -> List:
+def list_dates_in_file(file: str, logger:logging.Logger) -> List:
     query = """
                 SELECT
                     "TAP File (Current) Processing Date" AS TAP_FILE_CURRENT_PROCESSING_DATE,
-                    COUNT("Date (Call) YYYYMMDD") AS ROW_COUNT_CALL
+                    COUNT("Date (Call)") AS ROW_COUNT_CALL
                 FROM read_csv_auto(
                         ?,
                         delim=';',
@@ -210,7 +210,11 @@ def list_dates_in_file(file: str) -> List:
                 WHERE 1=1
                 GROUP BY TAP_FILE_CURRENT_PROCESSING_DATE;
             """
-    df = duckdb.execute(query, [file]).df()
+    try:
+        df = duckdb.execute(query, [file]).df()
+    except duckdb.BinderException as e:
+        logger.error("Coluna não encontrada: %s", e)
+        return []
     return df["TAP_FILE_CURRENT_PROCESSING_DATE"].dt.date.unique().tolist()
 
 
@@ -292,7 +296,7 @@ def main() -> None:
     logger.info("Carregando configurações do script...")
 
     DIRECTION = str(os.getenv("DIRECTION"))
-    SOURCE_SYSTEM = str(os.getenv("DCH"))
+    SOURCE_SYSTEM = str(os.getenv("SOURCE_SYSTEM"))
     JOB_NAME = str(os.getenv("JOB_NAME"))
     JOB_NAME_ABBR = str(os.getenv("JOB_NAME_ABBR"))
 
@@ -300,7 +304,7 @@ def main() -> None:
     TERADATA_USER = str(os.getenv("TERADATA_USER"))
     TERADATA_PASSWORD = str(os.getenv("TERADATA_PASSWORD"))
     TERADATA_DB = str(os.getenv("TERADATA_DB"))
-    TABLE_NAME = str(os.getenv("TERADATA_DB")) + DIRECTION
+    TABLE_NAME = str(os.getenv("TABLE_NAME")) + DIRECTION
     IF_EXISTS = str(os.getenv("IF_EXISTS"))
 
     if not is_valid_table_name(TABLE_NAME):
@@ -350,6 +354,7 @@ def main() -> None:
     paths = sorted(BASE_TAP.iterdir(), key=os.path.getmtime)
     errors_dataframe = None
 
+    # Conexão ao host
     try:
         logger.info("Criando conexão com o host")
         create_context(
@@ -364,6 +369,7 @@ def main() -> None:
         logger.error("Erro ao conectar ao host: %s", e)
         sys.exit()
 
+    # Criação da staging caso não exista e configura o queryband
     try:
         ensure_staging_table(TABLE_NAME, logger)
     except ValueError as e:
@@ -371,15 +377,15 @@ def main() -> None:
         sys.exit()
     except Exception as e:
         logger.error("Erro ao criar a tabela: %s", e)
-        sys.exit()
 
     uploaded_files = []
 
+    # Carregamento do arquivo, sanitização de colunas e upload com fastload para o teradata
     try:
         for file in paths:
             if str(file).endswith(".csv"):
                 logger.info("Carregando arquivo: %s", str(file))
-                logger.info("Datas no arquivo: %s", list_dates_in_file(str(file)))
+                logger.info("Datas no arquivo: %s", list_dates_in_file(str(file), logger))
                 df = load_file(str(file))
 
                 logger.info("Ajustando colunas...")
@@ -389,7 +395,7 @@ def main() -> None:
                     is_integer=False,
                 )
                 df = sanitize_numeric_col(
-                    df, ["CHARGED_SMS", "NUMBER_OF_CALLS"], is_integer=False
+                    df, ["CHARGED_SMS", "NUMBER_OF_CALLS"], is_integer=True
                 )
                 df = sanitize_str_col(
                     df,
@@ -416,27 +422,34 @@ def main() -> None:
                 )
 
                 logger.info("Arquivo carregado com sucesso. Shape: %s", str(df.shape))
-
+                logger.info("Dataframe carregado com as seguintes colunas: \n%s", df.dtypes)
+                df.to_csv("test.csv", sep=";", decimal=",", encoding="utf_8")
+                sys.exit()
                 logger.info("Enviando para o Teradata...")
-                result = fastload(
-                    df,
-                    TABLE_NAME,
-                    TERADATA_DB,
-                    types=TABLE_COLUMNS,
-                    if_exists=IF_EXISTS,
-                    batch_size=BATCH_SIZE_TERADATA,
-                    open_sessions=2,
-                )
-                if not result["errors_dataframe"].empty:
-                    logger.info(
-                        "Resultado do envio: %s", result["errors_dataframe"].head(2)
+
+                try:
+                    result = fastload(
+                        df,
+                        TABLE_NAME,
+                        TERADATA_DB,
+                        types=TABLE_COLUMNS,
+                        if_exists=IF_EXISTS,
+                        batch_size=BATCH_SIZE_TERADATA,
+                        open_sessions=2,
                     )
-                    errors_dataframe = result["errors_dataframe"].head(2)
-                    errors_dataframe.to_csv(
-                        "errors.csv", sep=";", decimal=",", encoding="utf_16"
-                    )
+                    if not result["errors_dataframe"].empty:
+                        logger.info(
+                            "Resultado do envio: %s", result["errors_dataframe"].head(2)
+                        )
+                        errors_dataframe = result["errors_dataframe"].head(2)
+                        errors_dataframe.to_csv(
+                            "errors.csv", sep=";", decimal=",", encoding="utf_16"
+                        )
+                        sys.exit()
+                    logger.info("Informações enviadas com sucesso!")
+                except TeradataMlException as e:
+                    logger.error("Não foi possível subir as informações. Erro encontrado: \n%s", e)
                     sys.exit()
-                logger.info("Informações enviadas com sucesso!")
 
             logger.info("Movendo arquivo para a pasta de processados")
             uploaded_files.append(str(file))

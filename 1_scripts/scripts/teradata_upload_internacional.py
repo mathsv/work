@@ -147,10 +147,16 @@ def sanitize_str_col(df: pandas.DataFrame, columns: List[str]) -> pandas.DataFra
         pandas.DataFrame: _description_
     """
     for col in columns:
-        df[col] = df[col].astype(str).str.replace(".", "")
-        df[col] = df[col].str.replace(",", ".").fillna("NA")
-        df[col] = df[col].astype("category")
+        if col in df.columns:
+            df[col] = df[col].astype(str).fillna("NA")
+            df[col] = df[col].astype("object")
+    return df
 
+
+def sanitize_date_col(df: pandas.DataFrame, date_cols: List[str]) -> pandas.DataFrame:
+    for col in date_cols:
+        if col in df.columns:
+            df[col] = pandas.to_datetime(df[col])
     return df
 
 
@@ -197,7 +203,7 @@ def ensure_staging_table(table_name: str, logger: logging.Logger) -> None:
         raise e
 
 
-def list_dates_in_file(file: str, logger:logging.Logger) -> List:
+def list_dates_in_file(file: str, logger: logging.Logger) -> List:
     query = """
                 SELECT
                     "TAP File (Current) Processing Date" AS TAP_FILE_CURRENT_PROCESSING_DATE,
@@ -385,7 +391,9 @@ def main() -> None:
         for file in paths:
             if str(file).endswith(".csv"):
                 logger.info("Carregando arquivo: %s", str(file))
-                logger.info("Datas no arquivo: %s", list_dates_in_file(str(file), logger))
+                logger.info(
+                    "Datas no arquivo: %s", list_dates_in_file(str(file), logger)
+                )
                 df = load_file(str(file))
 
                 logger.info("Ajustando colunas...")
@@ -408,6 +416,9 @@ def main() -> None:
                         "APN_NETWORK",
                     ],
                 )
+                df = sanitize_date_col(
+                    df, ["TAP_FILE_CURRENT_PROCESSING_DATE", "DATE_CALL"]
+                )
 
                 logger.info("Adicionando colunas de auditoria...")
                 df = add_audit_columns(
@@ -422,9 +433,16 @@ def main() -> None:
                 )
 
                 logger.info("Arquivo carregado com sucesso. Shape: %s", str(df.shape))
-                logger.info("Dataframe carregado com as seguintes colunas: \n%s", df.dtypes)
+                logger.info(
+                    "Dataframe carregado com as seguintes colunas: \n%s", df.dtypes
+                )
                 df.to_csv("test.csv", sep=";", decimal=",", encoding="utf_8")
                 sys.exit()
+
+                logger.info("Reordenando colunas para bater com o DDL do Teradata...")
+                # Garante que o DF tenha EXATAMENTE as colunas na ordem do OrderedDict
+                df = df[list(TABLE_COLUMNS.keys())] 
+
                 logger.info("Enviando para o Teradata...")
 
                 try:
@@ -448,7 +466,10 @@ def main() -> None:
                         sys.exit()
                     logger.info("Informações enviadas com sucesso!")
                 except TeradataMlException as e:
-                    logger.error("Não foi possível subir as informações. Erro encontrado: \n%s", e)
+                    logger.error(
+                        "Não foi possível subir as informações. Erro encontrado: \n%s",
+                        e,
+                    )
                     sys.exit()
 
             logger.info("Movendo arquivo para a pasta de processados")

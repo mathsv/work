@@ -224,6 +224,43 @@ def list_dates_in_file(file: str, logger: logging.Logger) -> List:
     return df["TAP_FILE_CURRENT_PROCESSING_DATE"].dt.date.unique().tolist()
 
 
+def move_data_from_stg_to_final_table(
+    db_name: str, table_name: str, logger: logging.Logger
+) -> None:
+    logger.info("Enviando dados para tabela final...")
+    query = f"""
+        INSERT INTO {db_name}.FCT_RMNG_INT
+            SELECT
+                TAP_FILE_CURRENT_PROCESSING_DATE,
+                DATE_CALL,
+                DIRECTION,
+                PMN_SETTLEMENT_TADIG_CODE,
+                CALL_TYPE,
+                IMSI,
+                MSISDN,
+                DEVICE_TAC_CODE,
+                APN_NETWORK,
+                NUMBER_OF_CALLS AS NUMBER_OF_EVENTS,
+                CHARGED_SMS,
+                CHARGED_MINUTES,
+                CHARGED_MB,
+                SETTLEMENT_GROSS_CHARGE_USD,
+                SOURCE_FILE_NAME,
+                SOURCE_SYSTEM,
+                JOB_NAME,
+                ETL_BATCH_ID,
+                ROW_CREATE_TS,
+                ROW_CREATE_USER
+            FROM {db_name}.{table_name};
+    """
+    try:
+        execute_sql(query)
+        logger.info("Dados enviados com sucesso!")
+        execute_sql(f"DROP TABLE {db_name}.{table_name};")
+        logger.info("Staging excluída!")
+    except Exception as e:
+        logger.error("Erro ao transferir dados da staging: %s", e)
+
 def load_file(file: str) -> pandas.DataFrame:
 
     try:
@@ -420,7 +457,6 @@ def main() -> None:
                     df, ["TAP_FILE_CURRENT_PROCESSING_DATE", "DATE_CALL"]
                 )
 
-                logger.info("Adicionando colunas de auditoria...")
                 df = add_audit_columns(
                     DIRECTION,
                     SOURCE_SYSTEM,
@@ -432,17 +468,16 @@ def main() -> None:
                     logger,
                 )
 
+                logger.info("Reordenando colunas para bater com o DDL do Teradata...")
+                # Garante que o DF tenha EXATAMENTE as colunas na ordem do OrderedDict
+                df = df[list(TABLE_COLUMNS.keys())]
+
                 logger.info("Arquivo carregado com sucesso. Shape: %s", str(df.shape))
                 logger.info(
                     "Dataframe carregado com as seguintes colunas: \n%s", df.dtypes
                 )
-                df.to_csv("test.csv", sep=";", decimal=",", encoding="utf_8")
-                sys.exit()
-
-                logger.info("Reordenando colunas para bater com o DDL do Teradata...")
-                # Garante que o DF tenha EXATAMENTE as colunas na ordem do OrderedDict
-                df = df[list(TABLE_COLUMNS.keys())] 
-
+                # df.to_csv("test.csv", sep=";", decimal=",", encoding="utf_8")
+                # sys.exit()
                 logger.info("Enviando para o Teradata...")
 
                 try:
@@ -472,9 +507,10 @@ def main() -> None:
                     )
                     sys.exit()
 
-            logger.info("Movendo arquivo para a pasta de processados")
+                logger.info("Movendo arquivo para a pasta de processados")
+                move_file(BASE_TAP, str(file))
             uploaded_files.append(str(file))
-            move_file(BASE_TAP, str(file))
+        move_data_from_stg_to_final_table(TERADATA_DB, TABLE_NAME, logger)
     except MemoryError as e:
         logger.info("Arquivos enviados: %s", uploaded_files)
         logger.error("Erro de Memória: %s", e)

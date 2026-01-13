@@ -115,7 +115,10 @@ def is_valid_table_name(name: str) -> bool:
 
 
 def sanitize_numeric_col(
-    df: pandas.DataFrame, columns: List[str], is_integer: bool = False, number_scale:int=5
+    df: pandas.DataFrame,
+    columns: List[str],
+    is_integer: bool = False,
+    number_scale: int = 5,
 ) -> pandas.DataFrame:
     """
     Sanitiza colunas numéricas removendo ruídos de formatação e tratando NaNs.
@@ -160,7 +163,9 @@ def sanitize_date_col(df: pandas.DataFrame, date_cols: List[str]) -> pandas.Data
     return df
 
 
-def ensure_staging_table(table_name: str, number_precision:int, number_scale:int, logger: logging.Logger) -> None:
+def ensure_staging_table(
+    table_name: str, number_precision: int, number_scale: int, logger: logging.Logger
+) -> None:
     if not is_valid_table_name(table_name):
         raise ValueError(f"Nome de tabela ilegal detectado: {table_name}")
 
@@ -263,7 +268,6 @@ def list_dates_in_file(file: str, logger: logging.Logger) -> List:
 
 
 def load_file(file: str) -> pandas.DataFrame:
-
     try:
         query = """
                     SELECT
@@ -383,7 +387,9 @@ def main() -> None:
         CHARGED_SMS=INTEGER(),
         CHARGED_MINUTES=NUMBER(precision=NUMBER_PRECISION, scale=NUMBER_SCALE),
         CHARGED_MB=NUMBER(precision=NUMBER_PRECISION, scale=NUMBER_SCALE),
-        SETTLEMENT_GROSS_CHARGE_BRL=NUMBER(precision=NUMBER_PRECISION, scale=NUMBER_SCALE),
+        SETTLEMENT_GROSS_CHARGE_BRL=NUMBER(
+            precision=NUMBER_PRECISION, scale=NUMBER_SCALE
+        ),
         DIRECTION=CHAR(3),
         SOURCE_FILE_NAME=VARCHAR(255),
         SOURCE_SYSTEM=VARCHAR(255),
@@ -418,7 +424,7 @@ def main() -> None:
 
     # Criação da staging caso não exista e configura o queryband
     try:
-        ensure_staging_table(TABLE_NAME, logger, NUMBER_SCALE, NUMBER_PRECISION)
+        ensure_staging_table(TABLE_NAME, NUMBER_PRECISION, NUMBER_SCALE, logger)
     except ValueError as e:
         logger.error("Erro ao criar a tabela: %s", e)
         sys.exit()
@@ -441,7 +447,8 @@ def main() -> None:
                 df = sanitize_numeric_col(
                     df,
                     ["CHARGED_MINUTES", "CHARGED_MB", "SETTLEMENT_GROSS_CHARGE_BRL"],
-                    is_integer=False, number_scale=NUMBER_SCALE
+                    is_integer=False,
+                    number_scale=NUMBER_SCALE,
                 )
                 df = sanitize_numeric_col(
                     df, ["CHARGED_SMS", "NUMBER_OF_CALLS"], is_integer=True
@@ -514,11 +521,15 @@ def main() -> None:
                 logger.info("Movendo arquivo para a pasta de processados")
                 move_file(BASE_TAP, str(file))
             uploaded_files.append(str(file))
-        #move_data_from_stg_to_final_table(TERADATA_DB, TABLE_NAME, logger)
+        # move_data_from_stg_to_final_table(TERADATA_DB, TABLE_NAME, logger)
     except MemoryError as e:
         logger.info("Arquivos enviados: %s", uploaded_files)
         logger.error("Erro de Memória: %s", e)
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        print("Encerrando script...")
+        sys.exit()

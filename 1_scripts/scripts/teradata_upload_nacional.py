@@ -115,7 +115,7 @@ def is_valid_table_name(name: str) -> bool:
 
 
 def sanitize_numeric_col(
-    df: pandas.DataFrame, columns: List[str], is_integer: bool = False
+    df: pandas.DataFrame, columns: List[str], is_integer: bool = False, number_scale:int=5
 ) -> pandas.DataFrame:
     """
     Sanitiza colunas numéricas removendo ruídos de formatação e tratando NaNs.
@@ -131,7 +131,7 @@ def sanitize_numeric_col(
         if is_integer:
             df[col] = df[col].astype(int)
         else:
-            df[col] = df[col].astype(float).round(5)
+            df[col] = df[col].astype(float).round(number_scale)
 
     return df
 
@@ -160,7 +160,7 @@ def sanitize_date_col(df: pandas.DataFrame, date_cols: List[str]) -> pandas.Data
     return df
 
 
-def ensure_staging_table(table_name: str, logger: logging.Logger) -> None:
+def ensure_staging_table(table_name: str, number_precision:int, number_scale:int, logger: logging.Logger) -> None:
     if not is_valid_table_name(table_name):
         raise ValueError(f"Nome de tabela ilegal detectado: {table_name}")
 
@@ -182,9 +182,9 @@ def ensure_staging_table(table_name: str, logger: logging.Logger) -> None:
                         DEVICE_TAC_CODE VARCHAR(8000),
                         NUMBER_OF_CALLS INTEGER,
                         CHARGED_SMS INTEGER,
-                        CHARGED_MINUTES NUMBER(15,5),
-                        CHARGED_MB NUMBER(15,5),
-                        SETTLEMENT_GROSS_CHARGE_BRL NUMBER(15,5),
+                        CHARGED_MINUTES NUMBER({number_precision},{number_scale}),
+                        CHARGED_MB NUMBER({number_precision},{number_scale}),
+                        SETTLEMENT_GROSS_CHARGE_BRL NUMBER({number_precision},{number_scale}),
                         
                         -- COLUNAS PREENCHIDAS PELO LOADER
                         DIRECTION CHAR(3),
@@ -208,7 +208,7 @@ def move_data_from_stg_to_final_table(
 ) -> None:
     logger.info("Enviando dados para tabela final...")
     query = f"""
-    INSERT INTO {db_name}.FCT_RMNG_NAT
+    INSERT INTO {db_name}.FCT_RMNG_NAT_NEW
         SELECT
             TAP_FILE_CURRENT_PROCESSING_DATE,
             DATE_CALL,
@@ -351,6 +351,9 @@ def main() -> None:
     TABLE_NAME = str(os.getenv("TABLE_NAME")) + DIRECTION
     IF_EXISTS = str(os.getenv("IF_EXISTS"))
 
+    NUMBER_PRECISION = 20
+    NUMBER_SCALE = 9
+
     if not is_valid_table_name(TABLE_NAME):
         logger.error(
             "Nome de tabela '%s' contém caracteres não permitidos ou formato inválido.",
@@ -378,9 +381,9 @@ def main() -> None:
         DEVICE_TAC_CODE=VARCHAR(8000),
         NUMBER_OF_CALLS=INTEGER(),
         CHARGED_SMS=INTEGER(),
-        CHARGED_MINUTES=NUMBER(precision=15, scale=5),
-        CHARGED_MB=NUMBER(precision=15, scale=5),
-        SETTLEMENT_GROSS_CHARGE_BRL=NUMBER(precision=15, scale=5),
+        CHARGED_MINUTES=NUMBER(precision=NUMBER_PRECISION, scale=NUMBER_SCALE),
+        CHARGED_MB=NUMBER(precision=NUMBER_PRECISION, scale=NUMBER_SCALE),
+        SETTLEMENT_GROSS_CHARGE_BRL=NUMBER(precision=NUMBER_PRECISION, scale=NUMBER_SCALE),
         DIRECTION=CHAR(3),
         SOURCE_FILE_NAME=VARCHAR(255),
         SOURCE_SYSTEM=VARCHAR(255),
@@ -415,7 +418,7 @@ def main() -> None:
 
     # Criação da staging caso não exista e configura o queryband
     try:
-        ensure_staging_table(TABLE_NAME, logger)
+        ensure_staging_table(TABLE_NAME, logger, NUMBER_SCALE, NUMBER_PRECISION)
     except ValueError as e:
         logger.error("Erro ao criar a tabela: %s", e)
         sys.exit()
@@ -438,7 +441,7 @@ def main() -> None:
                 df = sanitize_numeric_col(
                     df,
                     ["CHARGED_MINUTES", "CHARGED_MB", "SETTLEMENT_GROSS_CHARGE_BRL"],
-                    is_integer=False,
+                    is_integer=False, number_scale=NUMBER_SCALE
                 )
                 df = sanitize_numeric_col(
                     df, ["CHARGED_SMS", "NUMBER_OF_CALLS"], is_integer=True
@@ -511,7 +514,7 @@ def main() -> None:
                 logger.info("Movendo arquivo para a pasta de processados")
                 move_file(BASE_TAP, str(file))
             uploaded_files.append(str(file))
-        move_data_from_stg_to_final_table(TERADATA_DB, TABLE_NAME, logger)
+        #move_data_from_stg_to_final_table(TERADATA_DB, TABLE_NAME, logger)
     except MemoryError as e:
         logger.info("Arquivos enviados: %s", uploaded_files)
         logger.error("Erro de Memória: %s", e)

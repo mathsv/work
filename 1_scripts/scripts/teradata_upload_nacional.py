@@ -516,7 +516,22 @@ def main() -> None:
                         "Não foi possível subir as informações. Erro encontrado: \n%s",
                         e,
                     )
-                    sys.exit()
+                    try:
+                        result = fastload(
+                            df,
+                            TABLE_NAME,
+                            TERADATA_DB,
+                            types=TABLE_COLUMNS,
+                            if_exists=IF_EXISTS,
+                            batch_size=BATCH_SIZE_TERADATA,
+                            open_sessions=2,
+                        )
+                    except TeradataMlException as error:
+                        logger.error(
+                            "Não foi possível subir as informações. Erro encontrado: \n%s",
+                            error,
+                        )
+                        sys.exit()
 
                 logger.info("Movendo arquivo para a pasta de processados")
                 move_file(BASE_TAP, str(file))
